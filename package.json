@@ -1,0 +1,26 @@
+{
+  "name": "assistive_ai_prototype",
+  "version": "1.0.0",
+  "description": "prototype that helps civic and public sector organisations explain complex processes to the people they serve ",
+  "homepage": "https://github.com/naomikmunroe/assistive_ai_prototype#readme",
+  "bugs": {
+    "url": "https://github.com/naomikmunroe/assistive_ai_prototype/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naomikmunroe/assistive_ai_prototype.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node community-ai-prototype.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
+    "node-fetch": "^3.3.2"
+  }
+}
