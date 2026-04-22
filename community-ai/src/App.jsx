@@ -39,7 +39,8 @@ Your output must be structured as JSON with this exact format:
     {
       "issue": "What the concern is",
       "policy_reason": "Which part of the org's policy this relates to",
-      "severity": "high|medium|low"
+      "severity": "high|medium|low",
+      "suggestion": "One concrete rewrite of the flagged section in plain language that aligns with the org's values. Write it as if drafting the replacement text, not as a description of what to do."
     }
   ],
   "questions": [
@@ -52,14 +53,61 @@ Your output must be structured as JSON with this exact format:
 
 Return ONLY the JSON. No preamble, no explanation, no markdown fences.`;
 
+const INTERPRET_PROMPT = `You are helping a civic organisation understand how an AI will apply their values policy when analysing documents.
+
+Read the policy they have written. Extract the working criteria — the specific things the AI will check, flag, or avoid when analysing official documents on their behalf.
+
+Write each criterion as a plain, active, concrete statement: what the AI will do, not what the policy says. For example: "Will flag any language that implies a definitive eligibility decision" not "Prioritises plain language".
+
+Return JSON with this exact format:
+{
+  "criteria": [
+    "Criterion written as a specific, active check",
+    "..."
+  ]
+}
+
+Return ONLY the JSON. No preamble, no markdown fences.`;
+
+const STEPS = ["policy", "confirm", "document", "result"];
+const STEP_LABELS = { policy: "values", confirm: "review", document: "document", result: "analysis" };
+
 export default function CommunityAIPrototype() {
   const [policy, setPolicy] = useState(EXAMPLE_POLICY);
   const [document, setDocument] = useState("");
   const [result, setResult] = useState(null);
+  const [criteria, setCriteria] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [step, setStep] = useState("policy"); // policy | document | result
+  const [step, setStep] = useState("policy");
   const fileRef = useRef();
+
+  const interpretPolicy = async () => {
+    if (!policy.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("http://localhost:3001/api/analyse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 500,
+          system: INTERPRET_PROMPT,
+          messages: [{ role: "user", content: policy }],
+        }),
+      });
+      const data = await response.json();
+      const text = data.content?.find((b) => b.type === "text")?.text || "";
+      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      setCriteria(parsed.criteria);
+      setStep("confirm");
+    } catch (err) {
+      setError("Could not read your policy. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -81,7 +129,7 @@ export default function CommunityAIPrototype() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          max_tokens: 1500,
           system: SYSTEM_PROMPT(policy),
           messages: [{ role: "user", content: document }],
         }),
@@ -101,6 +149,7 @@ export default function CommunityAIPrototype() {
 
   const reset = () => {
     setResult(null);
+    setCriteria(null);
     setStep("policy");
     setDocument("");
     setError(null);
@@ -158,32 +207,37 @@ export default function CommunityAIPrototype() {
           gap: "8px",
           alignItems: "center",
         }}>
-          {["policy", "document", "result"].map((s, i) => (
-            <div key={s} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{
-                width: "24px",
-                height: "24px",
-                borderRadius: "50%",
-                border: `1px solid ${step === s ? "#c8b560" : step === "result" || (step === "document" && i === 0) ? "#444" : "#2a2a2a"}`,
-                background: step === s ? "#c8b560" : "transparent",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "11px",
-                color: step === s ? "#0f0f0f" : "#555",
-                fontFamily: "'Courier New', monospace",
-                transition: "all 0.3s",
-              }}>{i + 1}</div>
-              <span style={{
-                fontSize: "11px",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                color: step === s ? "#c8b560" : "#444",
-                fontFamily: "'Courier New', monospace",
-              }}>{s}</span>
-              {i < 2 && <div style={{ width: "20px", height: "1px", background: "#2a2a2a" }} />}
-            </div>
-          ))}
+          {STEPS.map((s, i) => {
+            const currentIndex = STEPS.indexOf(step);
+            const isActive = step === s;
+            const isCompleted = currentIndex > i;
+            return (
+              <div key={s} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div style={{
+                  width: "24px",
+                  height: "24px",
+                  borderRadius: "50%",
+                  border: `1px solid ${isActive ? "#c8b560" : isCompleted ? "#444" : "#2a2a2a"}`,
+                  background: isActive ? "#c8b560" : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "11px",
+                  color: isActive ? "#0f0f0f" : "#555",
+                  fontFamily: "'Courier New', monospace",
+                  transition: "all 0.3s",
+                }}>{i + 1}</div>
+                <span style={{
+                  fontSize: "11px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: isActive ? "#c8b560" : "#444",
+                  fontFamily: "'Courier New', monospace",
+                }}>{STEP_LABELS[s]}</span>
+                {i < STEPS.length - 1 && <div style={{ width: "20px", height: "1px", background: "#2a2a2a" }} />}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -236,29 +290,131 @@ export default function CommunityAIPrototype() {
             </div>
 
             <button
-              onClick={() => setStep("document")}
-              disabled={!policy.trim()}
+              onClick={interpretPolicy}
+              disabled={!policy.trim() || loading}
               style={{
                 marginTop: "24px",
                 padding: "14px 32px",
-                background: policy.trim() ? "#c8b560" : "#2a2a2a",
-                color: policy.trim() ? "#0f0f0f" : "#555",
+                background: policy.trim() && !loading ? "#c8b560" : "#2a2a2a",
+                color: policy.trim() && !loading ? "#0f0f0f" : "#555",
                 border: "none",
                 borderRadius: "3px",
                 fontSize: "13px",
                 letterSpacing: "0.08em",
                 textTransform: "uppercase",
-                cursor: policy.trim() ? "pointer" : "not-allowed",
+                cursor: policy.trim() && !loading ? "pointer" : "not-allowed",
                 fontFamily: "'Courier New', monospace",
                 transition: "all 0.2s",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
               }}
             >
-              Confirm Policy →
+              {loading ? (
+                <>
+                  <div style={{
+                    width: "14px", height: "14px", border: "2px solid #555",
+                    borderTopColor: "#888", borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }} />
+                  Reading your values…
+                </>
+              ) : "Confirm Policy →"}
             </button>
+
+            {error && (
+              <div style={{ marginTop: "16px", color: "#c0392b", fontSize: "13px", fontFamily: "'Courier New', monospace" }}>
+                {error}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Step 2: Document */}
+        {/* Step 2: Confirm interpretation */}
+        {step === "confirm" && criteria && (
+          <div style={{ animation: "fadeIn 0.4s ease" }}>
+            <div style={{ marginBottom: "32px" }}>
+              <h2 style={{ fontSize: "28px", fontWeight: "normal", margin: "0 0 8px", letterSpacing: "-0.02em" }}>
+                We understood your values as these working criteria
+              </h2>
+              <p style={{ color: "#888", margin: 0, fontSize: "15px", lineHeight: "1.6" }}>
+                This is how the AI will read your policy when analysing documents. If something looks wrong, go back and edit before continuing.
+              </p>
+            </div>
+
+            <div style={{
+              marginBottom: "24px",
+              padding: "24px",
+              background: "#161616",
+              border: "1px solid #2a2a2a",
+              borderRadius: "4px",
+            }}>
+              <div style={{ fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase", color: "#c8b560", marginBottom: "18px", fontFamily: "'Courier New', monospace" }}>
+                Working criteria
+              </div>
+              <ol style={{ margin: 0, padding: "0 0 0 18px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                {criteria.map((c, i) => (
+                  <li key={i} style={{ fontSize: "14px", color: "#ddd", lineHeight: "1.6" }}>
+                    {c}
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div style={{
+              marginBottom: "24px",
+              padding: "14px 18px",
+              background: "rgba(200,181,96,0.06)",
+              border: "1px solid rgba(200,181,96,0.15)",
+              borderRadius: "4px",
+              fontSize: "13px",
+              color: "#999",
+              lineHeight: "1.6",
+            }}>
+              <strong style={{ color: "#c8b560" }}>These become the constraint layer.</strong> Every flag and suggestion in the analysis will trace back to one of these criteria.
+            </div>
+
+            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+              <button
+                onClick={() => { setCriteria(null); setError(null); setStep("policy"); }}
+                style={{
+                  padding: "14px 24px",
+                  background: "none",
+                  color: "#888",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "3px",
+                  fontSize: "13px",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  fontFamily: "'Courier New', monospace",
+                }}
+              >
+                ← Edit values
+              </button>
+              <button
+                onClick={() => setStep("document")}
+                style={{
+                  padding: "14px 32px",
+                  background: "#c8b560",
+                  color: "#0f0f0f",
+                  border: "none",
+                  borderRadius: "3px",
+                  fontSize: "13px",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  fontFamily: "'Courier New', monospace",
+                  transition: "all 0.2s",
+                }}
+              >
+                That's right →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Document */}
         {step === "document" && (
           <div style={{ animation: "fadeIn 0.4s ease" }}>
             <div style={{ marginBottom: "32px" }}>
@@ -282,7 +438,7 @@ export default function CommunityAIPrototype() {
               <div style={{ fontSize: "13px", color: "#aaa", lineHeight: "1.6", whiteSpace: "pre-wrap", fontFamily: "'Courier New', monospace" }}>
                 {policy.length > 200 ? policy.slice(0, 200) + "…" : policy}
               </div>
-              <button onClick={() => setStep("policy")} style={{
+              <button onClick={() => setStep("confirm")} style={{
                 marginTop: "10px",
                 background: "none",
                 border: "none",
@@ -292,7 +448,7 @@ export default function CommunityAIPrototype() {
                 padding: 0,
                 fontFamily: "'Courier New', monospace",
                 letterSpacing: "0.05em",
-              }}>← Edit policy</button>
+              }}>← Review criteria</button>
             </div>
 
             <textarea
@@ -460,6 +616,40 @@ export default function CommunityAIPrototype() {
                       }}>
                         Policy basis: {flag.policy_reason}
                       </div>
+                      {flag.suggestion && (
+                        <div style={{
+                          marginTop: "14px",
+                          padding: "12px 14px",
+                          background: "rgba(200,181,96,0.05)",
+                          border: "1px solid rgba(200,181,96,0.15)",
+                          borderRadius: "3px",
+                        }}>
+                          <div style={{
+                            fontSize: "10px",
+                            letterSpacing: "0.12em",
+                            textTransform: "uppercase",
+                            color: "#c8b560",
+                            marginBottom: "6px",
+                            fontFamily: "'Courier New', monospace",
+                          }}>Suggested rewrite</div>
+                          <div style={{
+                            fontSize: "13px",
+                            color: "#ccc",
+                            lineHeight: "1.6",
+                            fontStyle: "italic",
+                          }}>
+                            "{flag.suggestion}"
+                          </div>
+                          <div style={{
+                            marginTop: "8px",
+                            fontSize: "11px",
+                            color: "#555",
+                            fontFamily: "'Courier New', monospace",
+                          }}>
+                            This is one option — the decision is yours.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
